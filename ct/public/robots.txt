@@ -1,0 +1,15 @@
+# public/robots.txt
+User-agent: *
+Allow: /$  # Allow homepage
+Allow: /about  # Example public page
+Allow: /blog/*  # Example blog section
+Disallow: /api/*  # Block all API routes
+Disallow: /_next/*  # Next.js internals
+Disallow: /admin  # Block admin panel (if exists)
+Disallow: /dashboard  # Block user dashboards
+Disallow: /tmp  # Temporary files
+Disallow: /test  # Test environments
+
+# Crawl-delay: 10  # Uncomment to slow down aggressive bots
+
+Sitemap: https://yourdomain.com/sitemap.xml

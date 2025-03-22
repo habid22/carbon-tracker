@@ -1,18 +1,24 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+import { createClient } from 'redis';
 import * as cheerio from 'cheerio';
 import got from 'got';
-import { createClient } from 'redis';
 
 // Initialize Redis
 const redis = createClient({
-  url: process.env.REDIS_URL || 'redis://localhost:6379'
+  socket: {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: process.env.REDIS_PORT || 6379,
+    reconnectStrategy: (retries) => Math.min(retries * 100, 3000)
+  }
 });
-await redis.connect();
+
+await redis.connect().catch(() => {
+  console.log('Redis connection failed - using fallback');
+});
 
 // Emission factors (grams CO2e)
 const EMISSION_FACTORS = {
   categories: {
-    electronics: 85,    // per kg
+    electronics: 85,
     clothing: 15,
     furniture: 30,
     appliances: 120,
@@ -26,7 +32,7 @@ const EMISSION_FACTORS = {
     composite: 15
   },
   shipping: {
-    air: 0.5,     // per kg/km
+    air: 0.5,
     sea: 0.01,
     road: 0.2
   }
@@ -39,9 +45,11 @@ export default async function handler(req, res) {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL required' });
     
-    // Check cache
-    const cached = await redis.get(`footprint:${url}`);
-    if (cached) return res.json(JSON.parse(cached));
+    let cached;
+    if (redis.isOpen) {
+      cached = await redis.get(`footprint:${url}`);
+      if (cached) return res.json(JSON.parse(cached));
+    }
 
     // Validate and parse URL
     let parsedUrl;
@@ -57,7 +65,7 @@ export default async function handler(req, res) {
     // Scrape product data
     const { body } = await got(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; EcoFootprintBot/1.0; +https://ecofootprint.app)'
+        'User-Agent': 'Mozilla/5.0 (compatible; EcoFootprintBot/1.0)'
       },
       timeout: 10000
     });
@@ -66,59 +74,14 @@ export default async function handler(req, res) {
     const productData = await extractProductData($);
     const footprint = calculateFootprint(productData);
 
-    // Cache for 1 hour
-    await redis.setEx(`footprint:${url}`, 3600, JSON.stringify(footprint));
+    if (redis.isOpen) {
+      await redis.setEx(`footprint:${url}`, 3600, JSON.stringify(footprint));
+    }
 
     res.status(200).json(footprint);
   } catch (error) {
     console.error('Error:', error.message);
-    const status = error.response?.statusCode || 500;
-    res.status(status).json({ 
-      error: error.response?.statusMessage || 'Failed to analyze product' 
-    });
-  }
-}
-
-async function extractProductData($) {
-  // Try structured data first
-  const ldJson = parseStructuredData($);
-  if (ldJson) return ldJson;
-
-  // Fallback to meta tags
-  return {
-    name: $('meta[property="og:title"]').attr('content') || $('title').text().trim(),
-    price: parseFloat(
-      $('meta[property="product:price:amount"]').attr('content') || '0'
-    ),
-    weight: parseFloat(
-      $('meta[property="product:weight:value"]').attr('content') || '1'
-    ),
-    category: ($('meta[property="product:category"]').attr('content') || 'general')
-      .toLowerCase(),
-    material: ($('meta[property="product:material"]').attr('content') || 'composite')
-      .toLowerCase(),
-    origin: $('meta[property="product:origin"]').attr('content') || 'CN'
-  };
-}
-
-function parseStructuredData($) {
-  try {
-    const scripts = $('script[type="application/ld+json"]');
-    for (const script of scripts) {
-      const json = JSON.parse(script.children[0].data.replace(/\\/g, ''));
-      if (json['@type'] === 'Product') {
-        return {
-          name: json.name,
-          price: json.offers?.price || 0,
-          weight: json.weight?.value || 1,
-          category: (json.category || 'general').toLowerCase(),
-          material: (json.material || 'composite').toLowerCase(),
-          origin: json.countryOfOrigin || 'CN'
-        };
-      }
-    }
-  } catch (e) {
-    return null;
+    res.status(500).json({ error: 'Failed to analyze product' });
   }
 }
 
