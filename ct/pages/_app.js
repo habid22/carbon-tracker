@@ -1,5 +1,9 @@
-import "@/styles/globals.css";
+import GlobeDemo from "@/components/ui/globe-demo";
 
-export default function App({ Component, pageProps }) {
-  return <Component {...pageProps} />;
+export default function Home() {
+  return (
+    <main>
+      <GlobeDemo />
+    </main>
+  );
 }
